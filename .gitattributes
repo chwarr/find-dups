@@ -1,0 +1,4 @@
+# Rust toolchain uses LF only
+
+*.rs text eol=lf
+*.toml text eol=lf
