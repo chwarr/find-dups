@@ -11,17 +11,37 @@ use std::thread;
 
 type Sha256Sum = [u8; 32];
 
+enum Work {
+    File { path: path::PathBuf },
+}
+
 struct WorkResult {
     pub path: path::PathBuf,
     pub result: io::Result<Sha256Sum>,
 }
 
 fn main() -> io::Result<()> {
+    let (work_sender, work_receiver) = unbounded();
     let (results_sender, results_receiver) = unbounded();
 
+    for argument in env::args().skip(1) {
+        let work = Work::File {
+            path: path::PathBuf::from(&argument),
+        };
+        work_sender
+            .send(work)
+            .expect("Unable to enqueue initial File work into work channel");
+    }
+
+    drop(work_sender);
+
     let worker_thread = thread::spawn(move || {
-        for argument in env::args().skip(1) {
-            let r = fingerprint_one_file(path::Path::new(&argument));
+        for work in work_receiver.iter() {
+            let file_path = match work {
+                Work::File { path } => path,
+            };
+
+            let r = fingerprint_one_file(&file_path);
             results_sender
                 .send(r)
                 .expect("Unable to enqueue result into result channel");
