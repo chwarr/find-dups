@@ -7,11 +7,13 @@ use std::fs;
 use std::io;
 use std::panic;
 use std::path;
+use std::process;
 use std::thread;
 
 type Sha256Sum = [u8; 32];
 
 enum Work {
+    Directory { path: path::PathBuf },
     File { path: path::PathBuf },
 }
 
@@ -25,26 +27,99 @@ fn main() -> io::Result<()> {
     let (results_sender, results_receiver) = unbounded();
 
     for argument in env::args().skip(1) {
-        let work = Work::File {
-            path: path::PathBuf::from(&argument),
-        };
-        work_sender
-            .send(work)
-            .expect("Unable to enqueue initial File work into work channel");
+        let path = path::Path::new(&argument);
+
+        if path.is_symlink() {
+            eprintln!("ERROR: Symlinks are not supported: {}", &argument);
+            process::exit(1);
+        }
+
+        let metadata = path.metadata()?;
+        if metadata.is_dir() {
+            let work = Work::Directory {
+                path: path::PathBuf::from(&path),
+            };
+            work_sender
+                .send(work)
+                .expect("Unable to enqueue initial Directory work into work channel");
+        } else {
+            assert!(
+                metadata.is_file(),
+                "Exptected path '{}' to be a file on this path, but it wasn't.",
+                path.display()
+            );
+
+            let work = Work::File {
+                path: path::PathBuf::from(&path),
+            };
+            work_sender
+                .send(work)
+                .expect("Unable to enqueue initial File work into work channel");
+        }
     }
 
+    let thread_work_sender = work_sender.clone();
     drop(work_sender);
 
     let worker_thread = thread::spawn(move || {
         for work in work_receiver.iter() {
-            let file_path = match work {
-                Work::File { path } => path,
-            };
+            match work {
+                Work::Directory { path } => {
+                    let read_dir = match fs::read_dir(&path) {
+                        Err(e) => {
+                            let r = WorkResult::from_err(&path, e);
+                            results_sender
+                                .send(r)
+                                .expect("Unable to enqueue result into result channel");
+                            continue;
+                        }
+                        Ok(read_dir) => read_dir,
+                    };
 
-            let r = fingerprint_one_file(&file_path);
-            results_sender
-                .send(r)
-                .expect("Unable to enqueue result into result channel");
+                    for entry in read_dir {
+                        let entry = match entry {
+                            Err(e) => {
+                                let r = WorkResult::from_err(&path, e);
+                                results_sender
+                                    .send(r)
+                                    .expect("Unable to enqueue result into result channel");
+                                continue;
+                            }
+                            Ok(entry) => entry,
+                        };
+
+                        let entry_path = entry.path();
+                        if entry_path.is_symlink() {
+                            panic!("Don't know how to enqueue error for symlink");
+                        } else if entry_path.is_dir() {
+                            let w = Work::Directory {
+                                path: entry_path.into(),
+                            };
+                            thread_work_sender
+                                .send(w)
+                                .expect("Unable to enqueue Directory into work channel");
+                        } else {
+                            assert!(
+                                entry_path.is_file(),
+                                "Expected path '{}' to be a file on this path, but it wasn't.",
+                                entry_path.display()
+                            );
+                            let w = Work::File {
+                                path: entry_path.into(),
+                            };
+                            thread_work_sender
+                                .send(w)
+                                .expect("Unable to enqueue File into work channel");
+                        }
+                    }
+                }
+                Work::File { path } => {
+                    let r = fingerprint_one_file(&path);
+                    results_sender
+                        .send(r)
+                        .expect("Unable to enqueue result into result channel");
+                }
+            };
         }
     });
 
