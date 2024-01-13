@@ -7,7 +7,6 @@ use std::fs;
 use std::io;
 use std::panic;
 use std::path;
-use std::process;
 use std::thread;
 
 type Sha256Sum = [u8; 32];
@@ -35,11 +34,22 @@ fn main() -> io::Result<()> {
         let path = path::Path::new(&argument);
 
         if path.is_symlink() {
-            eprintln!("ERROR: Symlinks are not supported: {}", &argument);
-            process::exit(1);
+            eprintln!("WARN: Symlinks are not supported: '{}'", &argument);
+            continue;
         }
 
-        let metadata = path.metadata()?;
+        let metadata = match path.metadata() {
+            Err(e) => {
+                eprintln!(
+                    "WARN: unable to process path on command line: '{}': {}",
+                    path.display(),
+                    e
+                );
+                continue;
+            }
+            Ok(metadata) => metadata,
+        };
+
         if metadata.is_dir() {
             let work = Work::Directory {
                 path: path::PathBuf::from(&path),
@@ -182,8 +192,8 @@ impl WorkResult {
 impl fmt::Display for WorkResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.result {
-            Ok(hash) => write!(f, "{} : {}", hex::encode(&hash), self.path.display()),
-            Err(err) => write!(f, "ERROR {} : {}", self.path.display(), err),
+            Ok(hash) => write!(f, "OK: '{}' : {}", hex::encode(&hash), self.path.display()),
+            Err(err) => write!(f, "ERROR '{}' : {}", self.path.display(), err),
         }
     }
 }
