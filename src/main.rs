@@ -1,4 +1,4 @@
-use crossbeam::channel::unbounded;
+use crossbeam::channel::{unbounded, Sender};
 use sha2::{Digest, Sha256};
 use std::convert::AsRef;
 use std::env;
@@ -13,8 +13,13 @@ use std::thread;
 type Sha256Sum = [u8; 32];
 
 enum Work {
-    Directory { path: path::PathBuf },
-    File { path: path::PathBuf },
+    Directory {
+        path: path::PathBuf,
+        work_sender: Sender<Work>,
+    },
+    File {
+        path: path::PathBuf,
+    },
 }
 
 struct WorkResult {
@@ -38,6 +43,7 @@ fn main() -> io::Result<()> {
         if metadata.is_dir() {
             let work = Work::Directory {
                 path: path::PathBuf::from(&path),
+                work_sender: work_sender.clone(),
             };
             work_sender
                 .send(work)
@@ -58,13 +64,17 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let thread_work_sender = work_sender.clone();
+    // Initial work has been enqueued. Any Directory work has its own clone
+    // of work_sender that is can use to enqueue more work.
+    //
+    // Drop this copy of the sender so that all the copies are dropped when
+    // directory enumeration is complete.
     drop(work_sender);
 
     let worker_thread = thread::spawn(move || {
         for work in work_receiver.iter() {
             match work {
-                Work::Directory { path } => {
+                Work::Directory { path, work_sender } => {
                     let read_dir = match fs::read_dir(&path) {
                         Err(e) => {
                             let r = WorkResult::from_err(&path, e);
@@ -94,8 +104,9 @@ fn main() -> io::Result<()> {
                         } else if entry_path.is_dir() {
                             let w = Work::Directory {
                                 path: entry_path.into(),
+                                work_sender: work_sender.clone(),
                             };
-                            thread_work_sender
+                            work_sender
                                 .send(w)
                                 .expect("Unable to enqueue Directory into work channel");
                         } else {
@@ -107,7 +118,7 @@ fn main() -> io::Result<()> {
                             let w = Work::File {
                                 path: entry_path.into(),
                             };
-                            thread_work_sender
+                            work_sender
                                 .send(w)
                                 .expect("Unable to enqueue File into work channel");
                         }
