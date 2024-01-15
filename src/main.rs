@@ -145,7 +145,16 @@ fn handle_dir_work<P: AsRef<path::Path>>(
 
         let entry_path = entry.path();
         if entry_path.is_symlink() {
-            panic!("Don't know how to enqueue error for symlink");
+            let r = WorkResult::from_err(
+                &path,
+                io::Error::other("Symlinks are not supported. Ignoring."),
+            );
+
+            results_sender
+                .send(r)
+                .expect("Unable to enqueue result into result channel");
+
+            continue;
         } else if entry_path.is_dir() {
             let w = Work::Directory {
                 path: entry_path.into(),
