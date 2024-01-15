@@ -12,15 +12,20 @@ use std::path;
 use std::thread;
 use std::thread::JoinHandle;
 use std::vec::Vec;
-use wild;
 
 type Sha256Sum = [u8; 32];
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The paths to compute SHA256 hashes over.
-    paths: Vec<OsString>,
+    /// Paths that make up the "left-hand" side of the comparison. Can be
+    /// repeated.
+    #[arg(long, required = true, short = 'l')]
+    left: Vec<OsString>,
+    /// Paths that make up the "right-hand" side of the comparison. Can be
+    /// repeated.
+    #[arg(long, required = true, short = 'r')]
+    right: Vec<OsString>,
 }
 
 enum Work {
@@ -39,7 +44,7 @@ struct WorkResult {
 }
 
 fn main() -> io::Result<()> {
-    let args = Args::parse_from(wild::args());
+    let args = Args::parse();
 
     let (work_sender, work_receiver) = unbounded();
     let (results_sender, results_receiver) = unbounded();
@@ -73,7 +78,7 @@ fn main() -> io::Result<()> {
 }
 
 fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
-    for argument in &args.paths {
+    for argument in args.left.iter().chain(args.right.iter()) {
         let path = path::Path::new(&argument);
 
         if path.is_symlink() {
