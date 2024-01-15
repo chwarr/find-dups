@@ -5,10 +5,12 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::num::NonZeroUsize;
 use std::panic;
 use std::path;
 use std::thread;
 use std::thread::JoinHandle;
+use std::vec::Vec;
 
 type Sha256Sum = [u8; 32];
 
@@ -40,7 +42,7 @@ fn main() -> io::Result<()> {
     // directory enumeration is complete.
     drop(work_sender);
 
-    let worker_thread = start_worker_thread(work_receiver, results_sender);
+    let worker_threads = start_worker_threads(work_receiver, results_sender);
 
     for result in results_receiver.iter() {
         if result.result.is_ok() {
@@ -50,8 +52,10 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if let Err(e) = worker_thread.join() {
-        panic::resume_unwind(e);
+    for worker_thread in worker_threads {
+        if let Err(e) = worker_thread.join() {
+            panic::resume_unwind(e);
+        }
     }
 
     Ok(())
@@ -103,20 +107,33 @@ fn enqueue_initial_work_from_args(work_sender: &Sender<Work>) {
     }
 }
 
-fn start_worker_thread(
+fn start_worker_threads(
     work_receiver: Receiver<Work>,
     results_sender: Sender<WorkResult>,
-) -> JoinHandle<()> {
-    thread::spawn(move || {
-        for work in work_receiver.iter() {
-            match work {
-                Work::Directory { path, work_sender } => {
-                    handle_dir_work(&path, &work_sender, &results_sender)
-                }
-                Work::File { path } => handle_file_work(&path, &results_sender),
-            };
-        }
-    })
+) -> Vec<JoinHandle<()>> {
+    let num_threads: usize = thread::available_parallelism()
+        .unwrap_or(NonZeroUsize::new(2).unwrap())
+        .into();
+
+    let mut results = Vec::with_capacity(num_threads);
+
+    for _ in 0..num_threads {
+        let thread_work_receiver = work_receiver.clone();
+        let thread_results_sender = results_sender.clone();
+
+        results.push(thread::spawn(move || {
+            for work in thread_work_receiver.iter() {
+                match work {
+                    Work::Directory { path, work_sender } => {
+                        handle_dir_work(&path, &work_sender, &thread_results_sender)
+                    }
+                    Work::File { path } => handle_file_work(&path, &thread_results_sender),
+                };
+            }
+        }));
+    }
+
+    results
 }
 
 fn handle_dir_work<P: AsRef<path::Path>>(
