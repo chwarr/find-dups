@@ -1,7 +1,8 @@
+use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use sha2::{Digest, Sha256};
 use std::convert::AsRef;
-use std::env;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -11,8 +12,16 @@ use std::path;
 use std::thread;
 use std::thread::JoinHandle;
 use std::vec::Vec;
+use wild;
 
 type Sha256Sum = [u8; 32];
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The paths to compute SHA256 hashes over.
+    paths: Vec<OsString>,
+}
 
 enum Work {
     Directory {
@@ -30,10 +39,12 @@ struct WorkResult {
 }
 
 fn main() -> io::Result<()> {
+    let args = Args::parse_from(wild::args());
+
     let (work_sender, work_receiver) = unbounded();
     let (results_sender, results_receiver) = unbounded();
 
-    enqueue_initial_work_from_args(&work_sender);
+    enqueue_initial_work_from_args(&args, &work_sender);
 
     // Initial work has been enqueued. Any Directory work has its own clone
     // of work_sender that is can use to enqueue more work.
@@ -61,12 +72,15 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn enqueue_initial_work_from_args(work_sender: &Sender<Work>) {
-    for argument in env::args().skip(1) {
+fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
+    for argument in &args.paths {
         let path = path::Path::new(&argument);
 
         if path.is_symlink() {
-            eprintln!("WARN: Symlinks are not supported: '{}'", &argument);
+            eprintln!(
+                "WARN: Symlinks are not supported: '{}'",
+                &argument.to_string_lossy()
+            );
             continue;
         }
 

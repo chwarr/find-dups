@@ -1,12 +1,16 @@
 [package]
 name = "find-dups"
+authors = ["Christopher Warrington <code@cw.codes>"]
+description = "Reports on files with duplicate content. Well, it will when I'm done with it. For now, prints SHA256 hashes of all the files on the command line. Recursively enumerates directories if given."
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = { version = "4.4.16", features = ["derive"] }
 crossbeam = "0.8.4"
 digest = "0.10"
 hex = "0.4.3"
 sha2 = "0.10"
+wild = "2.2.0"
