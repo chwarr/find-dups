@@ -192,8 +192,8 @@ impl WorkResult {
 impl fmt::Display for WorkResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.result {
-            Ok(hash) => write!(f, "OK: '{}' : {}", hex::encode(&hash), self.path.display()),
-            Err(err) => write!(f, "ERROR '{}' : {}", self.path.display(), err),
+            Ok(hash) => write!(f, "OK: '{}' : {}", self.path.display(), hex::encode(&hash)),
+            Err(err) => write!(f, "ERROR: '{}' : {}", self.path.display(), err),
         }
     }
 }
