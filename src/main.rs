@@ -31,6 +31,33 @@ fn main() -> io::Result<()> {
     let (work_sender, work_receiver) = unbounded();
     let (results_sender, results_receiver) = unbounded();
 
+    enqueue_initial_work_from_args(&work_sender);
+
+    // Initial work has been enqueued. Any Directory work has its own clone
+    // of work_sender that is can use to enqueue more work.
+    //
+    // Drop this copy of the sender so that all the copies are dropped when
+    // directory enumeration is complete.
+    drop(work_sender);
+
+    let worker_thread = start_worker_thread(work_receiver, results_sender);
+
+    for result in results_receiver.iter() {
+        if result.result.is_ok() {
+            println!("{}", result);
+        } else {
+            eprintln!("{}", result);
+        }
+    }
+
+    if let Err(e) = worker_thread.join() {
+        panic::resume_unwind(e);
+    }
+
+    Ok(())
+}
+
+fn enqueue_initial_work_from_args(work_sender: &Sender<Work>) {
     for argument in env::args().skip(1) {
         let path = path::Path::new(&argument);
 
@@ -74,29 +101,6 @@ fn main() -> io::Result<()> {
                 .expect("Unable to enqueue initial File work into work channel");
         }
     }
-
-    // Initial work has been enqueued. Any Directory work has its own clone
-    // of work_sender that is can use to enqueue more work.
-    //
-    // Drop this copy of the sender so that all the copies are dropped when
-    // directory enumeration is complete.
-    drop(work_sender);
-
-    let worker_thread = start_worker_thread(work_receiver, results_sender);
-
-    for result in results_receiver.iter() {
-        if result.result.is_ok() {
-            println!("{}", result);
-        } else {
-            eprintln!("{}", result);
-        }
-    }
-
-    if let Err(e) = worker_thread.join() {
-        panic::resume_unwind(e);
-    }
-
-    Ok(())
 }
 
 fn start_worker_thread(
