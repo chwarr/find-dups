@@ -161,7 +161,7 @@ fn handle_dir_work<P: AsRef<path::Path>>(
             continue;
         } else if entry_path.is_dir() {
             let w = Work::Directory {
-                path: entry_path.into(),
+                path: entry_path,
                 work_sender: work_sender.clone(),
             };
             work_sender
@@ -173,9 +173,7 @@ fn handle_dir_work<P: AsRef<path::Path>>(
                 "Expected path '{}' to be a file on this path, but it wasn't.",
                 entry_path.display()
             );
-            let w = Work::File {
-                path: entry_path.into(),
-            };
+            let w = Work::File { path: entry_path };
             work_sender
                 .send(w)
                 .expect("Unable to enqueue File into work channel");
@@ -224,7 +222,7 @@ impl WorkResult {
 impl fmt::Display for WorkResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.result {
-            Ok(hash) => write!(f, "OK: '{}' : {}", self.path.display(), hex::encode(&hash)),
+            Ok(hash) => write!(f, "OK: '{}' : {}", self.path.display(), hex::encode(hash)),
             Err(err) => write!(f, "ERROR: '{}' : {}", self.path.display(), err),
         }
     }
