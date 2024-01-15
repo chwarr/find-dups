@@ -1,4 +1,4 @@
-use crossbeam::channel::{unbounded, Sender};
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use sha2::{Digest, Sha256};
 use std::convert::AsRef;
 use std::env;
@@ -8,6 +8,7 @@ use std::io;
 use std::panic;
 use std::path;
 use std::thread;
+use std::thread::JoinHandle;
 
 type Sha256Sum = [u8; 32];
 
@@ -81,7 +82,28 @@ fn main() -> io::Result<()> {
     // directory enumeration is complete.
     drop(work_sender);
 
-    let worker_thread = thread::spawn(move || {
+    let worker_thread = start_worker_thread(work_receiver, results_sender);
+
+    for result in results_receiver.iter() {
+        if result.result.is_ok() {
+            println!("{}", result);
+        } else {
+            eprintln!("{}", result);
+        }
+    }
+
+    if let Err(e) = worker_thread.join() {
+        panic::resume_unwind(e);
+    }
+
+    Ok(())
+}
+
+fn start_worker_thread(
+    work_receiver: Receiver<Work>,
+    results_sender: Sender<WorkResult>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
         for work in work_receiver.iter() {
             match work {
                 Work::Directory { path, work_sender } => {
@@ -142,21 +164,7 @@ fn main() -> io::Result<()> {
                 }
             };
         }
-    });
-
-    for result in results_receiver.iter() {
-        if result.result.is_ok() {
-            println!("{}", result);
-        } else {
-            eprintln!("{}", result);
-        }
-    }
-
-    if let Err(e) = worker_thread.join() {
-        panic::resume_unwind(e);
-    }
-
-    Ok(())
+    })
 }
 
 fn fingerprint_one_file<P: AsRef<path::Path>>(path: P) -> WorkResult {
