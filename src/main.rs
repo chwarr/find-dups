@@ -67,11 +67,20 @@ fn main() -> io::Result<()> {
 
     let worker_threads = start_worker_threads(work_receiver, results_sender);
 
-    for result in results_receiver.iter() {
-        if result.result.is_ok() {
-            println!("{}", result);
-        } else {
-            eprintln!("{}", result);
+    let mut left: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+    let mut right: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+
+    for work_result in results_receiver.iter() {
+        if work_result.result.is_err() {
+            eprintln!("{}", work_result);
+            continue;
+        }
+
+        let sha256sum = work_result.result.unwrap();
+
+        match work_result.path {
+            PathLocation::Left(path) => add_to_result_hash_map(&mut left, sha256sum, path),
+            PathLocation::Right(path) => add_to_result_hash_map(&mut right, sha256sum, path),
         }
     }
 
@@ -81,7 +90,35 @@ fn main() -> io::Result<()> {
         }
     }
 
+    let locations = split_into_locations(left, right);
+
+    for path in locations.left {
+        println!("<= '{}'", path.display());
+    }
+
+    for path in locations.right {
+        println!("=> '{}'", path.display());
+    }
+
+    for (lpaths, rpaths) in locations.both {
+        println!("<=>");
+        for lpath in lpaths {
+            println!("  <= '{}'", lpath.display());
+        }
+        for rpath in rpaths {
+            println!("  => '{}'", rpath.display());
+        }
+    }
+
     Ok(())
+}
+
+fn add_to_result_hash_map(
+    map: &mut HashMap<Sha256Sum, Vec<path::PathBuf>>,
+    hash: Sha256Sum,
+    path: path::PathBuf,
+) {
+    map.entry(hash).or_insert(Vec::with_capacity(1)).push(path);
 }
 
 fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
