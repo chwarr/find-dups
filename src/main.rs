@@ -30,17 +30,23 @@ struct Args {
 
 enum Work {
     Directory {
-        path: path::PathBuf,
+        path: PathLocation,
         work_sender: Sender<Work>,
     },
     File {
-        path: path::PathBuf,
+        path: PathLocation,
     },
 }
 
 struct WorkResult {
-    pub path: path::PathBuf,
+    pub path: PathLocation,
     pub result: io::Result<Sha256Sum>,
+}
+
+#[derive(Clone)]
+enum PathLocation {
+    Left(path::PathBuf),
+    Right(path::PathBuf),
 }
 
 fn main() -> io::Result<()> {
@@ -78,13 +84,33 @@ fn main() -> io::Result<()> {
 }
 
 fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
-    for argument in args.left.iter().chain(args.right.iter()) {
-        let path = path::Path::new(&argument);
+    enqueue_initial_work_for_side(
+        args.left.iter(),
+        |path: &path::Path| -> PathLocation { PathLocation::new_left(path) },
+        work_sender,
+    );
+    enqueue_initial_work_for_side(
+        args.right.iter(),
+        |path: &path::Path| -> PathLocation { PathLocation::new_right(path) },
+        work_sender,
+    );
+}
+
+fn enqueue_initial_work_for_side<'a, I, F>(
+    arg_paths: I,
+    path_location_factory: F,
+    work_sender: &Sender<Work>,
+) where
+    I: IntoIterator<Item = &'a OsString>,
+    F: Fn(&path::Path) -> PathLocation,
+{
+    for arg_path in arg_paths.into_iter() {
+        let path = path::Path::new(&arg_path);
 
         if path.is_symlink() {
             eprintln!(
                 "WARN: Symlinks are not supported: '{}'",
-                &argument.to_string_lossy()
+                &arg_path.to_string_lossy()
             );
             continue;
         }
@@ -103,7 +129,7 @@ fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
 
         if metadata.is_dir() {
             let work = Work::Directory {
-                path: path::PathBuf::from(&path),
+                path: path_location_factory(path),
                 work_sender: work_sender.clone(),
             };
             work_sender
@@ -117,7 +143,7 @@ fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
             );
 
             let work = Work::File {
-                path: path::PathBuf::from(&path),
+                path: path_location_factory(path),
             };
             work_sender
                 .send(work)
@@ -144,9 +170,9 @@ fn start_worker_threads(
             for work in thread_work_receiver.iter() {
                 match work {
                     Work::Directory { path, work_sender } => {
-                        handle_dir_work(&path, &work_sender, &thread_results_sender)
+                        handle_dir_work(path, &work_sender, &thread_results_sender)
                     }
-                    Work::File { path } => handle_file_work(&path, &thread_results_sender),
+                    Work::File { path } => handle_file_work(path, &thread_results_sender),
                 };
             }
         }));
@@ -155,14 +181,14 @@ fn start_worker_threads(
     results
 }
 
-fn handle_dir_work<P: AsRef<path::Path>>(
-    path: P,
+fn handle_dir_work(
+    path: PathLocation,
     work_sender: &Sender<Work>,
     results_sender: &Sender<WorkResult>,
 ) {
-    let read_dir = match fs::read_dir(&path) {
+    let read_dir = match fs::read_dir(path.path()) {
         Err(e) => {
-            let r = WorkResult::from_err(&path, e);
+            let r = WorkResult::from_err(path, e);
             results_sender
                 .send(r)
                 .expect("Unable to enqueue result into result channel");
@@ -174,7 +200,7 @@ fn handle_dir_work<P: AsRef<path::Path>>(
     for entry in read_dir {
         let entry = match entry {
             Err(e) => {
-                let r = WorkResult::from_err(&path, e);
+                let r = WorkResult::from_err(path.clone(), e);
                 results_sender
                     .send(r)
                     .expect("Unable to enqueue result into result channel");
@@ -186,7 +212,7 @@ fn handle_dir_work<P: AsRef<path::Path>>(
         let entry_path = entry.path();
         if entry_path.is_symlink() {
             let r = WorkResult::from_err(
-                &path,
+                PathLocation::new_same_side(&path, &entry_path),
                 io::Error::other("Symlinks are not supported. Ignoring."),
             );
 
@@ -197,7 +223,7 @@ fn handle_dir_work<P: AsRef<path::Path>>(
             continue;
         } else if entry_path.is_dir() {
             let w = Work::Directory {
-                path: entry_path,
+                path: PathLocation::new_same_side(&path, &entry_path),
                 work_sender: work_sender.clone(),
             };
             work_sender
@@ -209,7 +235,9 @@ fn handle_dir_work<P: AsRef<path::Path>>(
                 "Expected path '{}' to be a file on this path, but it wasn't.",
                 entry_path.display()
             );
-            let w = Work::File { path: entry_path };
+            let w = Work::File {
+                path: PathLocation::new_same_side(&path, &entry_path),
+            };
             work_sender
                 .send(w)
                 .expect("Unable to enqueue File into work channel");
@@ -217,7 +245,7 @@ fn handle_dir_work<P: AsRef<path::Path>>(
     }
 }
 
-fn handle_file_work<P: AsRef<path::Path>>(path: P, results_sender: &Sender<WorkResult>) {
+fn handle_file_work(path: PathLocation, results_sender: &Sender<WorkResult>) {
     let r = fingerprint_one_file(path);
 
     results_sender
@@ -225,31 +253,31 @@ fn handle_file_work<P: AsRef<path::Path>>(path: P, results_sender: &Sender<WorkR
         .expect("Unable to enqueue result into result channel");
 }
 
-fn fingerprint_one_file<P: AsRef<path::Path>>(path: P) -> WorkResult {
-    let mut file = match fs::File::open(&path) {
-        Err(e) => return WorkResult::from_err(&path, e),
+fn fingerprint_one_file(path: PathLocation) -> WorkResult {
+    let mut file = match fs::File::open(path.path()) {
+        Err(e) => return WorkResult::from_err(path, e),
         Ok(f) => f,
     };
 
     let mut hasher = Sha256::new();
 
     match io::copy(&mut file, &mut hasher) {
-        Err(e) => WorkResult::from_err(&path, e),
-        Ok(_) => WorkResult::from_hash(&path, hasher.finalize()),
+        Err(e) => WorkResult::from_err(path, e),
+        Ok(_) => WorkResult::from_hash(path, hasher.finalize()),
     }
 }
 
 impl WorkResult {
-    fn from_err<P: AsRef<path::Path>>(path: P, err: io::Error) -> WorkResult {
+    fn from_err(path: PathLocation, err: io::Error) -> WorkResult {
         WorkResult {
-            path: path.as_ref().to_path_buf(),
+            path,
             result: Err(err),
         }
     }
 
-    fn from_hash<P: AsRef<path::Path>, H: Into<Sha256Sum>>(path: P, hash: H) -> WorkResult {
+    fn from_hash<H: Into<Sha256Sum>>(path: PathLocation, hash: H) -> WorkResult {
         WorkResult {
-            path: path.as_ref().to_path_buf(),
+            path,
             result: Ok(hash.into()),
         }
     }
@@ -258,8 +286,41 @@ impl WorkResult {
 impl fmt::Display for WorkResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.result {
-            Ok(hash) => write!(f, "OK: '{}' : {}", self.path.display(), hex::encode(hash)),
-            Err(err) => write!(f, "ERROR: '{}' : {}", self.path.display(), err),
+            Ok(hash) => write!(f, "OK: {} : {}", self.path, hex::encode(hash)),
+            Err(err) => write!(f, "ERROR: {} : {}", self.path, err),
+        }
+    }
+}
+
+impl PathLocation {
+    fn new_left<P: AsRef<path::Path>>(path: P) -> PathLocation {
+        PathLocation::Left(path.as_ref().to_path_buf())
+    }
+
+    fn new_right<P: AsRef<path::Path>>(path: P) -> PathLocation {
+        PathLocation::Right(path.as_ref().to_path_buf())
+    }
+
+    fn new_same_side<P: AsRef<path::Path>>(other: &PathLocation, path: P) -> PathLocation {
+        match other {
+            PathLocation::Left(_) => PathLocation::Left(path.as_ref().to_path_buf()),
+            PathLocation::Right(_) => PathLocation::Right(path.as_ref().to_path_buf()),
+        }
+    }
+
+    fn path(&self) -> &path::Path {
+        match self {
+            PathLocation::Left(path) => path,
+            PathLocation::Right(path) => path,
+        }
+    }
+}
+
+impl fmt::Display for PathLocation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PathLocation::Left(path) => write!(f, "<= '{}'", path.display()),
+            PathLocation::Right(path) => write!(f, "=> '{}'", path.display()),
         }
     }
 }
