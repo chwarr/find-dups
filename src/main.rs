@@ -1,6 +1,7 @@
 use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::convert::AsRef;
 use std::ffi::OsString;
 use std::fmt;
@@ -265,6 +266,131 @@ fn fingerprint_one_file(path: PathLocation) -> WorkResult {
         Err(e) => WorkResult::from_err(path, e),
         Ok(_) => WorkResult::from_hash(path, hasher.finalize()),
     }
+}
+
+struct Locations {
+    left: Vec<path::PathBuf>,
+    both: Vec<(Vec<path::PathBuf>, Vec<path::PathBuf>)>,
+    right: Vec<path::PathBuf>,
+}
+
+fn split_into_locations(
+    mut left: HashMap<Sha256Sum, Vec<path::PathBuf>>,
+    mut right: HashMap<Sha256Sum, Vec<path::PathBuf>>,
+) -> Locations {
+    // When extract_if is stabalized, I think this can be replaced by that.
+    // https://github.com/rust-lang/rust/issues/59618
+    let keys_in_both: HashSet<Sha256Sum> = left
+        .keys()
+        .filter_map(|k| {
+            if right.contains_key(k) {
+                Some(*k)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let both_results: Vec<(Vec<path::PathBuf>, Vec<path::PathBuf>)> = keys_in_both
+        .iter()
+        .map(|k| {
+            // The key was present in both, so unwrapping the Option from
+            // .remove shouldn't panic.
+            let from_left = left.remove(k).unwrap();
+            let from_right = right.remove(k).unwrap();
+            (from_left, from_right)
+        })
+        .collect();
+
+    // The items present in both have already been removed, so consuming the
+    // values to create the results should yield only left/right paths.
+    let left_results: Vec<path::PathBuf> = left.into_values().flatten().collect();
+    let right_results: Vec<path::PathBuf> = right.into_values().flatten().collect();
+
+    Locations {
+        left: left_results,
+        both: both_results,
+        right: right_results,
+    }
+}
+
+#[test]
+fn split_nothing_right_only_left() {
+    let some_sha256_sum1: Sha256Sum = [1u8; 32];
+    let some_sha256_sum2: Sha256Sum = [2u8; 32];
+
+    let mut left: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+    left.insert(some_sha256_sum1, vec!["lpath1".into()]);
+    left.insert(some_sha256_sum2, vec!["lpath2".into()]);
+
+    let right: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+
+    let results: Locations = split_into_locations(left, right);
+
+    assert_eq!(results.left.len(), 2);
+    assert!(results.both.is_empty());
+    assert!(results.right.is_empty());
+}
+
+#[test]
+fn split_nothing_left_only_right() {
+    let some_sha256_sum1: Sha256Sum = [1u8; 32];
+    let some_sha256_sum2: Sha256Sum = [2u8; 32];
+
+    let left: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+
+    let mut right: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+    right.insert(some_sha256_sum1, vec!["rpath1".into()]);
+    right.insert(some_sha256_sum2, vec!["rpath2".into()]);
+
+    let results: Locations = split_into_locations(left, right);
+
+    assert!(results.left.is_empty());
+    assert!(results.both.is_empty());
+    assert_eq!(results.right.len(), 2);
+}
+
+#[test]
+fn split_mix_has_expected_values() {
+    let some_sha256_sum_l: Sha256Sum = [1u8; 32];
+    let some_sha256_sum_r: Sha256Sum = [2u8; 32];
+    let some_sha256_sum_b: Sha256Sum = [4u8; 32];
+
+    let mut left: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+    left.insert(
+        some_sha256_sum_l,
+        vec!["lpath1_a".into(), "lpath2_a".into()],
+    );
+    left.insert(some_sha256_sum_b.clone(), vec!["bpath1_l".into()]);
+
+    let mut right: HashMap<Sha256Sum, Vec<path::PathBuf>> = HashMap::new();
+    right.insert(some_sha256_sum_r, vec!["rpath1".into()]);
+    right.insert(
+        some_sha256_sum_b.clone(),
+        vec!["bpath1_r".into(), "bpath2_r".into()],
+    );
+
+    let mut results: Locations = split_into_locations(left, right);
+
+    results.left.sort();
+    assert_eq!(
+        results.left,
+        vec![
+            path::PathBuf::from("lpath1_a"),
+            path::PathBuf::from("lpath2_a")
+        ]
+    );
+    assert_eq!(
+        results.both,
+        vec![(
+            vec![path::PathBuf::from("bpath1_l")],
+            vec![
+                path::PathBuf::from("bpath1_r"),
+                path::PathBuf::from("bpath2_r")
+            ]
+        )]
+    );
+    assert_eq!(results.right, vec![path::PathBuf::from("rpath1")]);
 }
 
 impl WorkResult {
