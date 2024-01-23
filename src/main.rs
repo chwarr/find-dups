@@ -118,7 +118,9 @@ fn add_to_result_hash_map(
     hash: Sha256Sum,
     path: path::PathBuf,
 ) {
-    map.entry(hash).or_insert(Vec::with_capacity(1)).push(path);
+    map.entry(hash)
+        .or_insert_with(|| Vec::with_capacity(1))
+        .push(path);
 }
 
 fn enqueue_initial_work_from_args(args: &Args, work_sender: &Sender<Work>) {
