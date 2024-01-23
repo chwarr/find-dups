@@ -27,6 +27,21 @@ struct Args {
     /// repeated.
     #[arg(long, required = true, short = 'r')]
     right: Vec<OsString>,
+
+    /// Omit printing files that only exist on the left-hand side. Defaults
+    /// to printing them.
+    #[arg(long, short = 'L')]
+    omit_left: bool,
+
+    /// Omit printing files that only exist on the right-hand side. Defaults
+    /// to printing them.
+    #[arg(long, short = 'R')]
+    omit_right: bool,
+
+    /// Print the files present in both the left- and right-hand sides.
+    /// Defaults to omitting them.
+    #[arg(long, short = 'B')]
+    show_both: bool,
 }
 
 enum Work {
@@ -92,21 +107,27 @@ fn main() -> io::Result<()> {
 
     let locations = split_into_locations(left, right);
 
-    for path in locations.left {
-        println!("<= '{}'", path.display());
-    }
-
-    for path in locations.right {
-        println!("=> '{}'", path.display());
-    }
-
-    for (lpaths, rpaths) in locations.both {
-        println!("<=>");
-        for lpath in lpaths {
-            println!("  <= '{}'", lpath.display());
+    if !args.omit_left {
+        for path in locations.left {
+            println!("<= '{}'", path.display());
         }
-        for rpath in rpaths {
-            println!("  => '{}'", rpath.display());
+    }
+
+    if !args.omit_right {
+        for path in locations.right {
+            println!("=> '{}'", path.display());
+        }
+    }
+
+    if args.show_both {
+        for (lpaths, rpaths) in locations.both {
+            println!("<=>");
+            for lpath in lpaths {
+                println!("  <= '{}'", lpath.display());
+            }
+            for rpath in rpaths {
+                println!("  => '{}'", rpath.display());
+            }
         }
     }
 
