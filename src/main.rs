@@ -105,21 +105,35 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let locations = split_into_locations(left, right);
+    let mut locations = split_into_locations(left, right);
 
     if !args.omit_left {
+        locations.left.sort();
         for path in locations.left {
             println!("<= '{}'", path.display());
         }
     }
 
     if !args.omit_right {
+        locations.right.sort();
         for path in locations.right {
             println!("=> '{}'", path.display());
         }
     }
 
     if args.show_both {
+        for (lpaths, rpaths) in locations.both.iter_mut() {
+            lpaths.sort();
+            rpaths.sort();
+        }
+
+        // Sort 'both' locations by their first lpath. The vectors are
+        // guaranteed to be non-empty, otherwise this wouldn't be a 'both'
+        // location.
+        locations
+            .both
+            .sort_by(|(lpaths_l, _), (lpaths_r, _)| std::cmp::Ord::cmp(&lpaths_l[0], &lpaths_r[0]));
+
         for (lpaths, rpaths) in locations.both {
             println!("<=>");
             for lpath in lpaths {
