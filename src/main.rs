@@ -108,14 +108,14 @@ fn main() -> io::Result<()> {
     let mut locations = split_into_locations(left, right);
 
     if !args.omit_left {
-        locations.left.sort();
+        locations.left.sort_unstable();
         for path in locations.left {
             println!("<= '{}'", path.display());
         }
     }
 
     if !args.omit_right {
-        locations.right.sort();
+        locations.right.sort_unstable();
         for path in locations.right {
             println!("=> '{}'", path.display());
         }
@@ -123,8 +123,8 @@ fn main() -> io::Result<()> {
 
     if args.show_both {
         for (lpaths, rpaths) in locations.both.iter_mut() {
-            lpaths.sort();
-            rpaths.sort();
+            lpaths.sort_unstable();
+            rpaths.sort_unstable();
         }
 
         // Sort 'both' locations by their first lpath. The vectors are
@@ -132,7 +132,9 @@ fn main() -> io::Result<()> {
         // location.
         locations
             .both
-            .sort_by(|(lpaths_l, _), (lpaths_r, _)| std::cmp::Ord::cmp(&lpaths_l[0], &lpaths_r[0]));
+            .sort_unstable_by(|(lpaths_l, _), (lpaths_r, _)| {
+                std::cmp::Ord::cmp(&lpaths_l[0], &lpaths_r[0])
+            });
 
         for (lpaths, rpaths) in locations.both {
             println!("<=>");
@@ -446,7 +448,7 @@ fn split_mix_has_expected_values() {
 
     let mut results: Locations = split_into_locations(left, right);
 
-    results.left.sort();
+    results.left.sort_unstable();
     assert_eq!(
         results.left,
         vec![
