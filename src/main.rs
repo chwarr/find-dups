@@ -1,3 +1,19 @@
+// Copyright 2024, G. Christopher Warrington <code@cw.codes>
+//
+// find-dups is free software: you can redistribute it and/or modify it
+// under the terms of the GNU Affero General Public License Version 3 as
+// published by the Free Software Foundation.
+//
+// find-dups is distributed in the hope that it will be useful, but WITHOUT
+// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+// FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
+// License for more details.
+//
+// A copy of the GNU Affero General Public License Version 3 is included in
+// the file LICENSE in the root of the repository.
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use clap::Parser;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use sha2::{Digest, Sha256};
